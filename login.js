@@ -1,51 +1,73 @@
+require("dotenv").config();
 const mysql = require("mysql");
 const express = require("express");
 const bodyParser = require("body-parser");
-const encoder = bodyParser.urlencoded();
+const xss = require("xss");
+const helmet = require("helmet");
+const validator = require('validator');
 
 const app = express();
-app.use("/assets",express.static("assets"));
-//})
+app.use("/assets", express.static("assets"));
+app.use(helmet());
 
 // MySQL
-const connection  = mysql.createConnection({
-    connectionLimit : 10,
-    host            : 'sql8.freemysqlhosting.net',
-    user            : 'sql8609760',
-    password        : 'Hc4fwjes7M',
-    database        : 'sql8609760'
-})
-
-// connect to the database
-connection.connect(function(error){
-    if (error) throw error
-    else console.log("connected to the database successfully!")
+const allowedHosts = [process.env.ALLOWED_HOST]; // whitelist allowed hosts
+const connection = mysql.createPool({
+  connectionLimit: 15,
+  port: 4000,
+  host: allowedHosts.includes(process.env.DB_HOST) ? process.env.DB_HOST : 'localhost', // check if host is allowed
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_DATABASE,
+  connectTimeout: 100000 // 60 seconds
 });
 
+// connect to the database
+connection.getConnection(function (error, conn) {
+  if (error) throw error;
+  else console.log("connected to the database successfully!");
+  conn.release();
+});
 
-app.get("/",function(req,res){
-    res.sendFile(__dirname + "/index.html");
-})
+app.get("/", function (req, res) {
+  res.sendFile(__dirname + "/index.html");
+});
 
-app.post("/",encoder, function(req,res){
-    var username = req.body.username;
-    var password = req.body.password;
+app.post("/", bodyParser.urlencoded({ extended: true }), function (req, res) {
+  var username = xss(req.body.username);
+  var password = xss(req.body.password);
 
-    connection.query("select * from loginuser where user_name = ? and user_pass = ?",[username,password],function(error,results,fields){
-        if (results.length > 0) {
-            res.redirect("/welcome");
-        } else {
-            res.redirect("/");
-        }
-        res.end();
-    })
-})
+  // validate user input
+  if (!validator.isAlphanumeric(username) || !validator.isAlphanumeric(password)) {
+    res.redirect("/");
+    return;
+  }
+
+  // use prepared statements to prevent SQL injection
+  connection.query(
+    "select * from loginuser where user_name = ? and user_pass = ?",
+    [username, password],
+    function (error, results, fields) {
+      if (error) throw error;
+      if (results.length > 0) {
+        res.redirect("/welcome");
+      } else {
+        res.redirect("/");
+      }
+      res.end();
+    }
+  );
+});
 
 // when login is success
-app.get("/welcome",function(req,res){
-    res.sendFile(__dirname + "/welcome.html")
-})
+app.get("/welcome", function (req, res) {
+  res.sendFile(__dirname + "/welcome.html");
+});
+
+// set app port
+app.listen(process.env.PORT || 4000, function () {
+    console.log("app listening on port " + (process.env.PORT || 4000));
+  });
 
 
-// set app port 
-app.listen(4000);
+  
